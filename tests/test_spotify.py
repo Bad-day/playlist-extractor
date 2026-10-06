@@ -111,3 +111,17 @@ def test_login_again_when_saved_token_lacks_new_scope(tmp_path, monkeypatch):
         SpotifyClient("cid", token_path).login()
     assert not token_path.exists()
     assert "user-read-private" in opened[0]
+
+
+def test_requests_korean_names(tmp_path):
+    seen = []
+    c, calls = make_client(tmp_path, lambda m, p: FakeResp(200, {"tracks": {"items": []}}))
+    orig = c.session.request
+
+    def request(method, url, **kw):
+        seen.append(kw["headers"])
+        return orig(method, url, **kw)
+
+    c.session.request = request
+    c.search_tracks("q")
+    assert seen[0]["Accept-Language"].startswith("ko")
