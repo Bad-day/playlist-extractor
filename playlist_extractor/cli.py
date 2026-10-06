@@ -84,7 +84,7 @@ def cmd_match(args: argparse.Namespace) -> None:
     client = _client(args)
     out = Path(args.output or OUTPUT / "match.csv")
     out.parent.mkdir(parents=True, exist_ok=True)
-    matched = total = 0
+    matched = guessed = total = 0
     with out.open("w", newline="", encoding="utf-8-sig") as f:
         writer = csv.DictWriter(f, fieldnames=CSV_FIELDS)
         writer.writeheader()
@@ -98,8 +98,9 @@ def cmd_match(args: argparse.Namespace) -> None:
                     print(f"  (검색 오류로 건너뜀: {str(e)[-120:]})")
                     m = Match(track=t)
                 total += 1
-                matched += bool(m.uri)
-                mark = "✔" if m.uri else "✘"
+                guessed += m.is_guess
+                matched += bool(m.uri) and not m.is_guess
+                mark = "△" if m.is_guess else ("✔" if m.uri else "✘")
                 print(f"  {mark} {t.title} / {t.artist}" + (f"  →  {m.name} / {m.artist} ({m.score})" if m.uri else ""))
                 writer.writerow({
                     "playlist": p.name, "source": p.source,
@@ -107,8 +108,10 @@ def cmd_match(args: argparse.Namespace) -> None:
                     "spotify_uri": m.uri, "spotify_title": m.name, "spotify_artist": m.artist,
                     "spotify_album": m.album, "score": m.score or "", "method": m.method,
                 })
-    print(f"\n매칭 {matched}/{total}곡. 결과: {out}")
-    print("못 찾은 곡(spotify_uri 비어 있음)은 Spotify 곡 링크를 spotify_uri 칸에 붙여 넣으면 push 때 함께 추가됩니다.")
+    print(f"\n✔ 찾음 {matched}곡 / △ 추정 {guessed}곡 / ✘ 못 찾음 {total - matched - guessed}곡  (전체 {total}곡)")
+    print(f"결과: {out}")
+    print("△ 추정은 가장 비슷한 곡입니다. CSV에서 method 가 guess 인 줄을 확인하세요 (push 때 기본 포함, --exclude-guesses 로 제외).")
+    print("✘ 못 찾은 곡은 Spotify 곡 링크를 spotify_uri 칸에 붙여 넣으면 push 때 함께 추가됩니다.")
 
 
 _TRACK_LINK = re.compile(r"open\.spotify\.com/(?:intl-[a-z]+/)?track/([A-Za-z0-9]{22})")
@@ -131,19 +134,22 @@ def _read_csv_text(path: Path) -> str:
         return raw.decode("cp949")
 
 
-def read_match_csv(path: Path) -> "OrderedDict[str, list[str]]":
+def read_match_csv(path: Path, exclude_guesses: bool = False) -> "OrderedDict[str, list[str]]":
     groups: "OrderedDict[str, list[str]]" = OrderedDict()
     with io.StringIO(_read_csv_text(path), newline="") as f:
         for row in csv.DictReader(f):
             uris = groups.setdefault(row["playlist"], [])
+            if exclude_guesses and (row.get("method") or "").strip() == "guess":
+                continue
             uri = to_uri(row.get("spotify_uri", ""))
-            if uri:
+            # 서로 다른 원곡(예: 같은 곡의 다른 앨범 버전)이 같은 Spotify 곡으로 매칭되면 한 번만 넣는다
+            if uri and uri not in uris:
                 uris.append(uri)
     return groups
 
 
 def cmd_push(args: argparse.Namespace) -> None:
-    groups = read_match_csv(Path(args.csv))
+    groups = read_match_csv(Path(args.csv), exclude_guesses=args.exclude_guesses)
     if args.only:
         groups = OrderedDict((k, v) for k, v in groups.items() if k in args.only)
     client = _client(args)
@@ -185,6 +191,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--public", action="store_true", help="공개 플레이리스트로 생성 (기본 비공개)")
     p.add_argument("--only", nargs="+", help="이 이름의 플레이리스트만")
     p.add_argument("--dry-run", action="store_true", help="실제로 만들지 않고 계획만 출력")
+    p.add_argument("--exclude-guesses", action="store_true", help="△ 추정(method=guess) 곡은 빼고 추가")
     p.add_argument("--client-id")
     p.set_defaults(func=cmd_push)
     return parser

@@ -30,6 +30,8 @@ DEFAULT_REDIRECT = "http://127.0.0.1:8888/callback"
 SCOPES = "playlist-modify-private playlist-modify-public playlist-read-private user-read-private"
 # 검색할 국가. 사용자 토큰이 있으면 계정 국가가 우선하지만, 명시해 두면 국가 조회 권한 문제를 피할 수 있다.
 DEFAULT_MARKET = "KR"
+# 곡·아티스트 이름을 한국어 표기로 받는다 (예: 'T.B.H' 대신 '고민중독'). VIBE·벅스 제목과 비교가 쉬워진다.
+DEFAULT_LOCALE = "ko-KR,ko;q=0.9,en;q=0.8"
 
 
 class SpotifyError(RuntimeError):
@@ -77,6 +79,7 @@ class SpotifyClient:
     ):
         self.client_id = client_id
         self.market = market
+        self.locale = os.environ.get("SPOTIFY_LOCALE", DEFAULT_LOCALE)
         self.token_path = token_path
         self.redirect_uri = redirect_uri
         self.session = requests.Session()
@@ -157,7 +160,7 @@ class SpotifyClient:
         for attempt in range(6):
             if time.time() >= self._token.get("expires_at", 0):
                 self._refresh()
-            headers = {"Authorization": f"Bearer {self._token['access_token']}"}
+            headers = {"Authorization": f"Bearer {self._token['access_token']}", "Accept-Language": self.locale}
             resp = self.session.request(method, API + path, headers=headers, timeout=30, **kwargs)
             if resp.status_code == 429:
                 wait = int(resp.headers.get("Retry-After", "2")) + 1

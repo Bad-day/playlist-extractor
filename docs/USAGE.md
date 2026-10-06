@@ -102,7 +102,10 @@ python -m playlist_extractor match output\vibe.json output\bugs.json
 ```
 
 - 처음 실행할 때만 브라우저에서 Spotify 로그인과 **동의** 화면이 뜹니다.
-- 곡마다 `✔`(찾음) 또는 `✘`(못 찾음)가 표시되고, 결과는 `output\match.csv`에 저장됩니다.
+- 곡마다 표시가 붙고, 결과는 `output\match.csv`에 저장됩니다.
+  - `✔` 찾음
+  - `△` 추정: 확실하진 않지만 가장 비슷한 곡입니다. Spotify에 영문 제목으로 올라간 국내 곡이 주로 여기에 해당합니다.
+  - `✘` 못 찾음
 - 파일은 하나만 넣어도 됩니다. 예: `match output\vibe.json`
 
 **옵션**
@@ -122,6 +125,7 @@ python -m playlist_extractor match output\vibe.json output\bugs.json
 | `spotify_uri` | 찾은 Spotify 곡입니다. **이 칸에 값이 있는 곡만** Spotify에 추가됩니다. |
 | `spotify_title` / `spotify_artist` | 찾은 곡의 제목과 아티스트입니다. 원래 곡과 같은지 비교하세요. |
 | `score` | 일치 정도(0~1)입니다. 낮은 곡부터 확인하세요. |
+| `method` | 찾은 방법입니다. `guess`는 △ 추정이니 **먼저 확인**하세요. 맞는 곡이면 그대로 두면 됩니다. |
 
 - **못 찾은 곡**(`spotify_uri`가 빈 곡): Spotify 앱에서 그 곡을 찾아 **공유 → 곡 링크 복사**를 누르고, 복사한 링크(`https://open.spotify.com/track/...`)를 그 칸에 붙여 넣습니다.
 - **잘못 찾은 곡**: `spotify_uri` 칸을 올바른 링크로 바꾸거나 비웁니다.
@@ -147,6 +151,7 @@ python -m playlist_extractor push output\match.csv --prefix "[VIBE] "
 | 옵션 | 설명 |
 |---|---|
 | `--dry-run` | 실제로 만들지 않고 "어떤 플레이리스트에 몇 곡 추가 예정"만 출력합니다. |
+| `--exclude-guesses` | △ 추정(`method=guess`) 곡은 빼고 추가합니다. 기본은 포함입니다. |
 | `--prefix "글자"` | Spotify 플레이리스트 이름 앞에 붙입니다. 예: `[VIBE] 운동` |
 | `--only "이름1" "이름2"` | 지정한 플레이리스트만 만듭니다. |
 | `--public` | 공개 플레이리스트로 만듭니다. 기본은 비공개입니다. |
