@@ -76,3 +76,12 @@ def test_read_match_csv_groups_and_skips_empty(tmp_path):
         "A": ["spotify:track:aaaaaaaaaaaaaaaaaaaaaa"],
         "B": ["spotify:track:bbbbbbbbbbbbbbbbbbbbbb"],
     }
+
+
+def test_read_match_csv_saved_by_excel_in_cp949(tmp_path):
+    p = tmp_path / "m.csv"
+    p.write_bytes(
+        ("playlist,source,title,artist,album,spotify_uri,spotify_title,spotify_artist,spotify_album,score,method\r\n"
+         "국힙&외힙,vibe,곡,가수,,spotify:track:aaaaaaaaaaaaaaaaaaaaaa,,,,,\r\n").encode("cp949")
+    )
+    assert dict(read_match_csv(p)) == {"국힙&외힙": ["spotify:track:aaaaaaaaaaaaaaaaaaaaaa"]}

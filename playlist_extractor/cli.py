@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import io
 import os
 import re
 import sys
@@ -110,9 +111,18 @@ def to_uri(value: str) -> str:
     return value if value.startswith("spotify:track:") else ""
 
 
+def _read_csv_text(path: Path) -> str:
+    # 엑셀에서 고쳐 'CSV(쉼표로 분리)'로 저장하면 UTF-8이 아니라 CP949로 저장된다
+    raw = path.read_bytes()
+    try:
+        return raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        return raw.decode("cp949")
+
+
 def read_match_csv(path: Path) -> "OrderedDict[str, list[str]]":
     groups: "OrderedDict[str, list[str]]" = OrderedDict()
-    with path.open(newline="", encoding="utf-8-sig") as f:
+    with io.StringIO(_read_csv_text(path), newline="") as f:
         for row in csv.DictReader(f):
             uris = groups.setdefault(row["playlist"], [])
             uri = to_uri(row.get("spotify_uri", ""))
@@ -143,7 +153,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="playlist-extractor", description="벅스/VIBE 플레이리스트 → Spotify")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    for service, label in (("vibe", "네이버 VIBE 보관함"), ("bugs", "벅스 내 앨범")):
+    for service, label in (("vibe", "네이버 VIBE 보관함"), ("bugs", "벅스 곡 목록(내 앨범·최근 들은 곡 등)")):
         p = sub.add_parser(service, help=f"{label} 추출")
         p.add_argument("-o", "--output", help=f"결과 JSON (기본 output/{service}.json)")
         p.add_argument("--dump", action="store_true", help="원본 응답/HTML을 output/raw_*/ 에 저장 (구조 확인용)")
