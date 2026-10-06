@@ -13,7 +13,7 @@ from typing import Optional
 from bs4 import BeautifulSoup, Tag
 from playwright.sync_api import Page
 
-from .browser import CapturedResponse, interactive_capture
+from .browser import CaptureLog, interactive_capture
 from .models import Playlist, Track
 
 START_URL = "https://music.bugs.co.kr/user/library"
@@ -78,9 +78,9 @@ def _playlist_name(page: Page, html: str) -> str:
     return _text(h) or page.url
 
 
-def _collect(page: Page, _responses: list[CapturedResponse]) -> Optional[Playlist]:
+def _collect(page: Page, _log: CaptureLog) -> list[Playlist]:
     html = page.content()
-    return Playlist(name=_playlist_name(page, html), source="bugs", url=page.url, tracks=parse_tracks(html))
+    return [Playlist(name=_playlist_name(page, html), source="bugs", url=page.url, tracks=parse_tracks(html))]
 
 
 def extract(profile_dir: Path, dump_dir: Optional[Path] = None, channel: Optional[str] = None) -> list[Playlist]:

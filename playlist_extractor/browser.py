@@ -44,7 +44,22 @@ class CapturedResponse:
     body: str
 
 
-Collector = Callable[[Page, list[CapturedResponse]], Optional[Playlist]]
+class CaptureLog:
+    """이번 실행 동안 받은 응답 전체. 수집기는 이전 Enter 이후(since_mark) 또는 전체(history)를 본다."""
+
+    def __init__(self) -> None:
+        self.history: list[CapturedResponse] = []
+        self.mark = 0
+
+    def since(self, index: int) -> list[CapturedResponse]:
+        return self.history[index:]
+
+    def since_mark(self) -> list[CapturedResponse]:
+        return self.since(self.mark)
+
+
+# 한 번의 Enter로 여러 플레이리스트를 돌려줄 수 있다 (예: VIBE 보관함 목록 전체 순회)
+Collector = Callable[[Page, CaptureLog], list[Playlist]]
 
 
 def auto_scroll(page: Page, max_rounds: int = 80, pause_ms: int = 700) -> None:
@@ -63,13 +78,13 @@ def auto_scroll(page: Page, max_rounds: int = 80, pause_ms: int = 700) -> None:
 
 
 def merge_playlist(playlists: list[Playlist], new: Playlist) -> list[Playlist]:
-    """같은 URL을 다시 수집하면 교체하고, 이름이 같은 다른 URL(다음 페이지 등)이면 곡을 이어 붙인다."""
+    """같은 URL을 다시 수집하면 교체하고, 쿼리만 다른 같은 페이지(벅스 ?page=2 등)면 곡을 이어 붙인다."""
     out: list[Playlist] = []
     merged = False
     for p in playlists:
         if p.url == new.url:
             continue
-        if p.name == new.name and p.source == new.source and not merged:
+        if not merged and p.source == new.source and _base_url(p.url) == _base_url(new.url):
             keys = {t.source_id for t in p.tracks if t.source_id}
             p.tracks += [t for t in new.tracks if not t.source_id or t.source_id not in keys]
             merged = True
@@ -77,6 +92,10 @@ def merge_playlist(playlists: list[Playlist], new: Playlist) -> list[Playlist]:
     if not merged:
         out.append(new)
     return out
+
+
+def _base_url(url: str) -> str:
+    return url.split("?", 1)[0].split("#", 1)[0]
 
 
 def _stdin_reader(commands: "queue.Queue[str]") -> None:
@@ -104,13 +123,13 @@ def interactive_capture(
     guide: str = "",
     headless: bool = False,
 ) -> list[Playlist]:
-    """브라우저를 띄우고, 사용자가 Enter를 누를 때마다 현재 페이지를 플레이리스트로 수집한다."""
+    """브라우저를 띄우고, 사용자가 Enter를 누를 때마다 현재 페이지에서 플레이리스트를 수집한다."""
     profile_dir.mkdir(parents=True, exist_ok=True)
     if dump_dir:
         dump_dir.mkdir(parents=True, exist_ok=True)
 
     playlists: list[Playlist] = []
-    buffer: list[CapturedResponse] = []
+    log = CaptureLog()
     dump_seq = [0]
 
     def on_response(resp: Response) -> None:
@@ -123,7 +142,7 @@ def interactive_capture(
             body = resp.text()
         except PlaywrightError:
             return
-        buffer.append(CapturedResponse(resp.url, ctype, body))
+        log.history.append(CapturedResponse(resp.url, ctype, body))
         if dump_dir:
             dump_seq[0] += 1
             ext = "xml" if "xml" in ctype else "json"
@@ -172,25 +191,28 @@ def interactive_capture(
             try:
                 print("스크롤하며 곡 목록을 불러오는 중...")
                 auto_scroll(page)
-                playlist = collector(page, list(buffer))
+                if dump_dir:
+                    dump_seq[0] += 1
+                    (dump_dir / f"{dump_seq[0]:04d}_page.html").write_text(
+                        f"<!-- {page.url} -->\n{page.content()}", encoding="utf-8"
+                    )
+                collected = collector(page, log)
             except PlaywrightError as e:
                 print(f"수집 실패: {e}")
                 continue
-            buffer.clear()
-            if dump_dir:
-                dump_seq[0] += 1
-                (dump_dir / f"{dump_seq[0]:04d}_page.html").write_text(
-                    f"<!-- {page.url} -->\n{page.content()}", encoding="utf-8"
-                )
-            if playlist is None or not playlist.tracks:
+            log.mark = len(log.history)
+            collected = [p for p in collected if p.tracks]
+            if not collected:
                 print("이 페이지에서 곡을 찾지 못했습니다. 플레이리스트 상세 페이지에서 다시 시도하세요.")
                 continue
-            playlists = merge_playlist(playlists, playlist)
-            print(f"✔ '{playlist.name}' {len(playlist.tracks)}곡 수집 (누적 {len(playlists)}개 플레이리스트)")
-            for t in playlist.tracks[:3]:
-                print(f"    - {t.title} / {t.artist}")
-            if len(playlist.tracks) > 3:
-                print("    ...")
+            for playlist in collected:
+                playlists = merge_playlist(playlists, playlist)
+                print(f"✔ '{playlist.name}' {len(playlist.tracks)}곡 수집")
+                for t in playlist.tracks[:3]:
+                    print(f"    - {t.title} / {t.artist}")
+                if len(playlist.tracks) > 3:
+                    print("    ...")
+            print(f"(누적 {len(playlists)}개 플레이리스트)  다른 페이지에서 Enter, 끝내려면 q + Enter")
 
         context.close()
     return playlists

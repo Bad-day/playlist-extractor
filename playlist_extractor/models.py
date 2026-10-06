@@ -27,6 +27,18 @@ class Playlist:
     tracks: list[Track] = field(default_factory=list)
 
 
+def uniquify_names(playlists: list[Playlist]) -> None:
+    """Spotify로 옮길 때 이름별로 묶으므로, 이름이 겹치면 뒤에 (2), (3)을 붙인다."""
+    seen: dict[str, int] = {}
+    for p in playlists:
+        key = p.name
+        if key in seen:
+            seen[key] += 1
+            p.name = f"{key} ({seen[key]})"
+        else:
+            seen[key] = 1
+
+
 def save_playlists(playlists: list[Playlist], path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     data = [asdict(p) for p in playlists]
