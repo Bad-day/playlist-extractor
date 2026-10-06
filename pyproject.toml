@@ -1,0 +1,23 @@
+[project]
+name = "playlist-extractor"
+version = "0.1.0"
+description = "벅스 / 네이버 VIBE 내 플레이리스트를 추출해 Spotify로 옮기는 개인용 도구"
+requires-python = ">=3.10"
+dependencies = [
+    "playwright>=1.40",
+    "requests>=2.31",
+    "beautifulsoup4>=4.12",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+playlist-extractor = "playlist_extractor.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["playlist_extractor"]

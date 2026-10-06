@@ -1,0 +1,5 @@
+{"response": {"result": {"trackTotalCount": 3, "tracks": [
+  {"trackId": 1001, "trackTitle": "밤편지", "artists": [{"artistId": 1, "artistName": "아이유"}], "album": {"albumId": 10, "albumTitle": "밤편지"}},
+  {"trackId": 1002, "trackTitle": "Hype Boy", "artists": [{"artistId": 2, "artistName": "NewJeans"}], "album": {"albumId": 11, "albumTitle": "NewJeans 1st EP 'New Jeans'"}},
+  {"trackId": 1003, "trackTitle": "봄날 (feat. 누군가)", "artists": [{"artistId": 3, "artistName": "방탄소년단"}, {"artistId": 4, "artistName": "누군가"}], "album": {"albumId": 12, "albumTitle": "YOU NEVER WALK ALONE"}}
+]}}}
