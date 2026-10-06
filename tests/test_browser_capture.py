@@ -17,6 +17,8 @@ PLAYLISTS = {
     "74895566": ("☠️", [("RAVE", "Dxrk"), ("MONTAGEM COMA", "Mustafa Atarer"), ("DIA DELÍCIA", "Nakama"),
                     ("PASSO BEM SOLTO", "EmCee.A"), ("Brasuk", "Brasuk Beat")]),
     "74895565": ("기본 리스트", []),
+    # 화면이 첫 페이지(2곡)만 불러오고 멈추는 플레이리스트 → API 페이지를 직접 이어서 요청해야 한다
+    "74895550": ("국힙&외힙", [(f"힙합{i}", "가수") for i in range(1, 6)]),
 }
 
 
@@ -36,6 +38,7 @@ LIBRARY = f"""<!doctype html><html><head><title>{GENERIC_TITLE}</title></head><b
 <div class="card"><a href="/mylist/74895567"><img alt=""></a><a href="/mylist/74895567">운동</a><span>2곡</span></div>
 <div class="card"><a href="/mylist/74895566"><img alt=""></a><div><p>☠️</p><p>5곡</p></div></div>
 <div class="card"><a href="/mylist/74895565"><img alt=""></a><div><p>기본 리스트</p><p>0곡</p></div></div>
+<div class="card"><a href="/mylist/74895550"><img alt=""></a><a href="/mylist/74895550">국힙&amp;외힙</a><span>5곡</span></div>
 <script>fetch('/api/vibe/library/mylists');</script>
 </body></html>"""
 
@@ -61,7 +64,7 @@ fetch('/api/vibe/recommend/tracks');
 load();
 document.getElementById('list').addEventListener('scroll', e => {
   const el = e.target;
-  if (el.scrollTop + el.clientHeight >= el.scrollHeight - 5) load();
+  if (pid !== '74895550' && el.scrollTop + el.clientHeight >= el.scrollHeight - 5) load();
 });
 </script></body></html>""" % GENERIC_TITLE
 
@@ -83,7 +86,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             start = int(params.get("start", 1))
             page = tracks_of(pid)[start - 1 : start + 1]
             body = {"response": {"result": {"mylist": {"mylistId": int(pid), "mylistName": PLAYLISTS[pid][0]},
-                                            "tracks": page}}}
+                                            "trackTotalCount": len(PLAYLISTS[pid][1]), "tracks": page}}}
             self._send(json.dumps(body), "application/json")
         elif path == "/api/vibe/recommend/tracks":
             self._send(json.dumps({"tracks": [track_obj("9999", 0, "추천곡", "누군가")]}), "application/json")
@@ -141,6 +144,7 @@ def test_library_page_collects_each_playlist_separately(server, tmp_path, monkey
     assert [(p.name, titles(p)) for p in playlists] == [
         ("운동", ["Warriors", "Legend"]),
         ("☠️", ["RAVE", "MONTAGEM COMA", "DIA DELÍCIA", "PASSO BEM SOLTO", "Brasuk"]),
+        ("국힙&외힙", [f"힙합{i}" for i in range(1, 6)]),
     ]
     assert playlists[0].url.endswith("/mylist/74895567")
     assert any(p.suffix == ".html" for p in (tmp_path / "dump").iterdir())
