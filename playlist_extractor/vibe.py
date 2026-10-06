@@ -12,7 +12,7 @@ import re
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any, Iterator, Optional
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlencode, urlparse
 
 from playwright.sync_api import Page
 
@@ -273,10 +273,101 @@ def _wait_loaded(page: Page) -> None:
     page.wait_for_timeout(800)
 
 
-def _collect_one(page: Page, log: CaptureLog, start: int, hint: str = "") -> Optional[Playlist]:
+# 곡 목록 API의 페이지 파라미터 (위치, 크기). 앱이 스크롤로 다음 페이지를 안 불러올 때 직접 요청한다.
+_PAGING_KEYS = (("start", "display"), ("offset", "limit"), ("start", "count"), ("page", "size"), ("page", "display"))
+_TOTAL_KEY = re.compile(r"(track)?total(track)?count|trackcount|totalcount", re.I)
+
+_FETCH_JS = """
+async (url) => {
+  const r = await fetch(url, {credentials: 'include', headers: {Accept: 'application/json'}});
+  return {status: r.status, type: r.headers.get('content-type') || '', body: await r.text()};
+}
+"""
+
+
+def next_page_url(url: str, got: int) -> str:
+    """페이지 파라미터가 있으면 다음 페이지 URL을 만든다 (start=1&display=100 → start=101)."""
+    parts = urlparse(url)
+    query = parse_qs(parts.query, keep_blank_values=True)
+    for pos_key, size_key in _PAGING_KEYS:
+        if pos_key not in query or not query[pos_key][0].isdigit():
+            continue
+        pos = int(query[pos_key][0])
+        size_raw = query.get(size_key, [""])[0]
+        size = int(size_raw) if size_raw.isdigit() else got
+        if size <= 0:
+            return ""
+        query[pos_key] = [str(pos + 1 if pos_key == "page" else pos + size)]
+        return parts._replace(query=urlencode(query, doseq=True)).geturl()
+    return ""
+
+
+def total_from_responses(responses: list[CapturedResponse]) -> int:
+    """응답에 들어 있는 전체 곡 수(trackTotalCount 등). 없으면 0."""
+    best = 0
+    for r in responses:
+        for d in _iter_dicts(parse_body(r.body)):
+            if "trackTitle" in d:
+                continue
+            for k, v in d.items():
+                if _TOTAL_KEY.fullmatch(k) and str(v).isdigit():
+                    best = max(best, int(v))
+    return best
+
+
+def expected_count(texts: list[str]) -> int:
+    """카드 텍스트의 'N곡'."""
+    for text in texts:
+        m = re.search(r"(\d[\d,]*)\s*곡", text or "")
+        if m:
+            return int(m.group(1).replace(",", ""))
+    return 0
+
+
+def _matched(log: CaptureLog, start: int, ids: list[str]) -> list[CapturedResponse]:
+    return [
+        r for r in log.since(start)
+        if any(i in r.url for i in ids) and next(iter_tracks(parse_body(r.body)), None) is not None
+    ]
+
+
+def load_remaining_pages(page: Page, log: CaptureLog, start: int, expected: int = 0, max_pages: int = 50) -> None:
+    """화면이 일부만 불러온 경우(예: 100곡에서 멈춤) 같은 API로 다음 페이지를 직접 요청한다."""
+    ids = page_ids(page.url)
+    requested: set[str] = set()
+    for _ in range(max_pages):
+        matched = _matched(log, start, ids)
+        if not matched:
+            return
+        have = len(tracks_from_responses(log.since(start), page.url)[0])
+        total = expected or total_from_responses(matched)
+        if total and have >= total:
+            return
+        last = matched[-1]
+        url = next_page_url(last.url, len(list(iter_tracks(parse_body(last.body)))))
+        if not url or url in requested:
+            return
+        requested.add(url)
+        try:
+            result = page.evaluate(_FETCH_JS, url)
+        except PlaywrightError:
+            return
+        if result.get("status") != 200:
+            return
+        if not any(r.url == url for r in log.since(start)):
+            log.history.append(CapturedResponse(url, result.get("type", ""), result.get("body", "")))
+        if len(tracks_from_responses(log.since(start), page.url)[0]) <= have:
+            return  # 새 곡이 없으면 마지막 페이지
+
+
+def _collect_one(page: Page, log: CaptureLog, start: int, hint: str = "", expected: int = 0) -> Optional[Playlist]:
+    load_remaining_pages(page, log, start, expected)
     tracks, exact = tracks_from_responses(log.since(start), page.url)
     if not exact:
         return None
+    total = expected or total_from_responses(_matched(log, start, page_ids(page.url)))
+    if total and len(tracks) < total:
+        print(f"    ※ {total}곡 중 {len(tracks)}곡만 가져왔습니다. --dump 결과(output/raw_vibe)를 공유해 주세요.")
     return Playlist(name=_name_for(page, log.since(start), page.url, hint), source="vibe", url=page.url, tracks=tracks)
 
 
@@ -310,7 +401,7 @@ def _collect_library(page: Page, log: CaptureLog, cards: list[dict]) -> list[Pla
         except PlaywrightError as e:
             print(f"    열기 실패: {e}")
             continue
-        playlist = _collect_one(page, log, start, hint)
+        playlist = _collect_one(page, log, start, hint, expected_count(card["texts"]))
         if playlist is None:
             print("    곡 목록을 찾지 못했습니다 (빈 플레이리스트일 수 있음)")
             continue

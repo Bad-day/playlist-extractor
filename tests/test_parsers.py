@@ -127,3 +127,17 @@ def test_vibe_cards_from_library_response():
         ("https://vibe.naver.com/mylist/74895567", "운동"),
         ("https://vibe.naver.com/mylist/74895566", "☠️"),
     ]
+
+
+def test_vibe_next_page_url():
+    url = "https://apis.naver.com/vibeWeb/musicapiweb/myMusic/mylist/74895550/tracks?start=1&display=100"
+    assert vibe.next_page_url(url, 100).endswith("tracks?start=101&display=100")
+    assert vibe.next_page_url("https://x/mylist/74895550?page=1&size=50", 50).endswith("?page=2&size=50")
+    assert vibe.next_page_url("https://x/mylist/74895550/tracks", 100) == ""
+
+
+def test_vibe_counts():
+    assert vibe.expected_count(["국힙&외힙\n128곡"]) == 128
+    assert vibe.expected_count(["", "이름만"]) == 0
+    body = '{"response": {"result": {"trackTotalCount": 128, "tracks": [{"trackId": 1, "trackTitle": "x"}]}}}'
+    assert vibe.total_from_responses([CapturedResponse("u", "application/json", body)]) == 128
