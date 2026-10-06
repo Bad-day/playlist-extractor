@@ -58,3 +58,56 @@ def test_retries_after_rate_limit(tmp_path, monkeypatch):
     assert c.search_tracks("q") == [{"name": "a"}]
     assert c.search_tracks("q") == [{"name": "a"}]  # 캐시
     assert len(calls) == 2
+
+
+def test_search_uses_explicit_market(tmp_path):
+    params = []
+
+    def responder(method, path):
+        return FakeResp(200, {"tracks": {"items": []}})
+
+    c, calls = make_client(tmp_path, responder)
+    orig = c.session.request
+
+    def request(method, url, **kw):
+        params.append(kw.get("params"))
+        return orig(method, url, **kw)
+
+    c.session.request = request
+    c.search_tracks("q")
+    assert params[0]["market"] == "KR"
+
+
+def test_login_reuses_token_with_all_scopes(tmp_path):
+    import json
+
+    from playlist_extractor import spotify
+
+    token_path = tmp_path / "token.json"
+    token_path.write_text(json.dumps({"access_token": "t", "refresh_token": "r", "scope": spotify.SCOPES}))
+    c = SpotifyClient("cid", token_path)
+    c.login()
+    assert c._token["access_token"] == "t"
+
+
+def test_login_again_when_saved_token_lacks_new_scope(tmp_path, monkeypatch):
+    import json
+
+    import pytest
+
+    from playlist_extractor import spotify
+
+    token_path = tmp_path / "token.json"
+    old_scopes = "playlist-modify-private playlist-modify-public playlist-read-private"
+    token_path.write_text(json.dumps({"access_token": "old", "refresh_token": "r", "scope": old_scopes}))
+    opened = []
+    monkeypatch.setattr(spotify.webbrowser, "open", lambda url: opened.append(url))
+
+    def stop(*_):
+        raise spotify.SpotifyError("stop")
+
+    monkeypatch.setattr(spotify, "_wait_for_code", stop)
+    with pytest.raises(spotify.SpotifyError):
+        SpotifyClient("cid", token_path).login()
+    assert not token_path.exists()
+    assert "user-read-private" in opened[0]

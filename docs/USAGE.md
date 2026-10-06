@@ -204,6 +204,7 @@ python -m playlist_extractor push output\match_hiphop.csv --prefix "[VIBE] "
 | `Spotify Client ID가 필요합니다` | `$env:SPOTIFY_CLIENT_ID="..."`를 입력합니다. PowerShell을 새로 열 때마다 다시 넣어야 합니다. |
 | Spotify 인증 실패 / `INVALID_CLIENT: Invalid redirect URI` | Spotify 앱 설정의 리디렉션 URI가 정확히 `http://127.0.0.1:8888/callback`인지 확인하세요. |
 | Spotify 로그인을 다른 계정으로 바꾸고 싶음 | `.spotify_token.json`을 지우고 다시 실행합니다. |
+| `match` 중 403 `Insufficient client scope` | 최신 버전으로 업데이트하고 다시 실행하세요. Spotify 동의 화면이 한 번 더 뜹니다. 그래도 나오면 `.spotify_token.json`을 지우고 다시 실행합니다. |
 | 네이버·벅스 로그인이 막힘 | `--chrome` 옵션을 붙여 실행합니다. |
 | "이 페이지에서 곡을 찾지 못했습니다" | `--dump`로 실행한 뒤 `output\raw_vibe` 또는 `output\raw_bugs`에서 가장 최근 `..._page.html` 파일을 공유해 주세요. |
 | 새 버전을 받았는데 반영이 안 됨 | 실행 중인 추출 창을 `q`로 끝내고 다시 실행합니다. 재설치나 PowerShell 재시작은 필요 없습니다. |
