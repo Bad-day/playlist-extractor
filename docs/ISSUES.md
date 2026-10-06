@@ -10,6 +10,7 @@
 | 4 | 설치 | PowerShell에서 `Activate.ps1` 실행 오류, `pyproject.toml`을 못 찾음 | 사용 방법 안내로 해결 |
 | 5 | 설정 | Spotify 앱 만들 때 웹사이트 / 리디렉션 URI에 뭘 넣어야 하는지 | 사용 방법 안내로 해결 |
 | 6 | 벅스 | '최근 들은 곡'처럼 여러 페이지로 나뉜 목록도 추출하고 싶음 (기능 요청) | 추가함, 실제 확인 필요 |
+| 7 | Spotify | `match` 실행 시 검색이 403 "Insufficient client scope" | 수정함, 실제 확인 필요 |
 
 ---
 
@@ -115,3 +116,22 @@ python -m playwright install chromium
 
 **남은 확인**
 - 실제 벅스 페이지 번호 영역의 구조는 아직 확인하지 못했습니다. 페이지가 넘어가지 않으면 `output\raw_bugs`에서 가장 최근 `..._page.html` 파일을 공유해 주세요.
+
+## 7. Spotify `match` 실행 시 403 "Insufficient client scope"
+
+**증상**
+- Spotify 로그인은 성공했는데, 첫 곡을 검색하자마자 아래 오류로 멈췄습니다.
+  ```
+  GET https://api.spotify.com/v1/search?...&market=from_token → 403 {"error": {"status": 403, "message": "Insufficient client scope"}}
+  ```
+
+**원인 (추정)**
+- 검색할 때 `market=from_token`(로그인한 사용자 계정의 국가로 검색)을 썼습니다. 그런데 계정 국가를 읽는 권한(`user-read-private`)을 요청하지 않았습니다.
+
+**해결**
+- 로그인할 때 `user-read-private` 권한도 함께 요청합니다.
+- 검색 국가를 `KR`로 명시합니다. 다른 국가로 검색하려면 환경변수 `SPOTIFY_MARKET`으로 바꿀 수 있습니다(예: `$env:SPOTIFY_MARKET="JP"`).
+- 저장된 로그인 정보(`.spotify_token.json`)에 새 권한이 없으면 자동으로 다시 로그인합니다. 업데이트 후 첫 실행에서 Spotify 동의 화면이 한 번 더 뜨는 것은 정상입니다.
+
+**남은 확인**
+- 업데이트 후 `match`가 끝까지 진행되는지 확인해야 합니다.

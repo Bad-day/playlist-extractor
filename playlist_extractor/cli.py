@@ -56,12 +56,17 @@ def cmd_extract(args: argparse.Namespace) -> None:
 
 
 def _client(args: argparse.Namespace):
-    from .spotify import DEFAULT_REDIRECT, SpotifyClient
+    from .spotify import DEFAULT_MARKET, DEFAULT_REDIRECT, SpotifyClient
 
     client_id = args.client_id or os.environ.get("SPOTIFY_CLIENT_ID")
     if not client_id:
         sys.exit("Spotify Client ID가 필요합니다: --client-id 또는 환경변수 SPOTIFY_CLIENT_ID")
-    client = SpotifyClient(client_id, TOKEN, os.environ.get("SPOTIFY_REDIRECT_URI", DEFAULT_REDIRECT))
+    client = SpotifyClient(
+        client_id,
+        TOKEN,
+        os.environ.get("SPOTIFY_REDIRECT_URI", DEFAULT_REDIRECT),
+        os.environ.get("SPOTIFY_MARKET", DEFAULT_MARKET),
+    )
     client.login()
     return client
 

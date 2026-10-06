@@ -26,7 +26,10 @@ AUTH_URL = "https://accounts.spotify.com/authorize"
 TOKEN_URL = "https://accounts.spotify.com/api/token"
 API = "https://api.spotify.com/v1"
 DEFAULT_REDIRECT = "http://127.0.0.1:8888/callback"
-SCOPES = "playlist-modify-private playlist-modify-public playlist-read-private"
+# user-read-private: 검색 시 사용자 국가(market)를 쓰려면 필요. 없으면 /search가 403 "Insufficient client scope".
+SCOPES = "playlist-modify-private playlist-modify-public playlist-read-private user-read-private"
+# 검색할 국가. 사용자 토큰이 있으면 계정 국가가 우선하지만, 명시해 두면 국가 조회 권한 문제를 피할 수 있다.
+DEFAULT_MARKET = "KR"
 
 
 class SpotifyError(RuntimeError):
@@ -69,8 +72,11 @@ def _wait_for_code(redirect_uri: str, state: str, timeout: int = 300) -> str:
 
 
 class SpotifyClient:
-    def __init__(self, client_id: str, token_path: Path, redirect_uri: str = DEFAULT_REDIRECT):
+    def __init__(
+        self, client_id: str, token_path: Path, redirect_uri: str = DEFAULT_REDIRECT, market: str = DEFAULT_MARKET
+    ):
         self.client_id = client_id
+        self.market = market
         self.token_path = token_path
         self.redirect_uri = redirect_uri
         self.session = requests.Session()
@@ -89,8 +95,14 @@ class SpotifyClient:
 
     def login(self) -> None:
         if self.token_path.exists():
-            self._token = json.loads(self.token_path.read_text(encoding="utf-8"))
-            return
+            token = json.loads(self.token_path.read_text(encoding="utf-8"))
+            missing = set(SCOPES.split()) - set(str(token.get("scope", "")).split())
+            if not missing:
+                self._token = token
+                return
+            # 권한(scope)이 추가된 새 버전이면 예전 토큰으로는 403이 나므로 다시 로그인한다
+            print(f"Spotify 권한이 추가되어 다시 로그인합니다: {' '.join(sorted(missing))}")
+            self.token_path.unlink()
         verifier, challenge = _pkce_pair()
         state = secrets.token_urlsafe(16)
         url = AUTH_URL + "?" + urllib.parse.urlencode(
@@ -174,7 +186,7 @@ class SpotifyClient:
     def search_tracks(self, query: str, limit: int = 10) -> list[dict]:
         if query not in self._search_cache:
             resp = self.request(
-                "GET", "/search", params={"q": query, "type": "track", "limit": limit, "market": "from_token"}
+                "GET", "/search", params={"q": query, "type": "track", "limit": limit, "market": self.market}
             )
             self._search_cache[query] = self._json(resp).get("tracks", {}).get("items", []) or []
         return self._search_cache[query]
