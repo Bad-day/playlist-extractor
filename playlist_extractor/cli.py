@@ -16,7 +16,7 @@ import sys
 from collections import OrderedDict
 from pathlib import Path
 
-from .models import load_playlists, save_playlists
+from .models import load_playlists, save_playlists, uniquify_names
 
 ROOT = Path.cwd()
 OUTPUT = ROOT / "output"
@@ -44,7 +44,10 @@ def cmd_extract(args: argparse.Namespace) -> None:
         # 여러 번 나눠 실행해도 이전 결과가 지워지지 않게 이어 붙인다 (같은 URL은 새 결과로 교체)
         new_urls = {p.url for p in playlists}
         playlists = [p for p in load_playlists(out) if p.url not in new_urls] + playlists
+    uniquify_names(playlists)
     save_playlists(playlists, out)
+    for p in playlists:
+        print(f"  - {p.name}: {len(p.tracks)}곡")
     total = sum(len(p.tracks) for p in playlists)
     print(f"\n저장: {out}  ({len(playlists)}개 플레이리스트, {total}곡)")
     if dump_dir:
