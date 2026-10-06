@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<response><result><tracks>
+  <track><trackId>2001</trackId><trackTitle>Ditto</trackTitle><artists><artist><artistName>NewJeans</artistName></artist></artists><album><albumTitle>OMG</albumTitle></album></track>
+  <track><trackId>2002</trackId><trackTitle>Love wins all</trackTitle><artists><artist><artistName>아이유</artistName></artist><artist><artistName>V</artistName></artist></artists><album><albumTitle>Love wins all</albumTitle></album></track>
+</tracks></result></response>
