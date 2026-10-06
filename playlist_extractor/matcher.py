@@ -15,10 +15,9 @@ from typing import Callable, Optional
 
 from .models import Track
 
-# (feat. X), [Prod. Y], - Remastered 등 버전/참여 표기
-_DECORATION = re.compile(
-    r"\s*[\(\[][^\)\]]*(feat|ft\.|with|prod|inst|remaster|ver\.|version|mix|edit|live)[^\)\]]*[\)\]]",
-    re.I,
+# (feat. X), [Prod. Y], (Remastered) 등 버전/참여 표기로 보는 괄호 안 단어
+_DECORATION_WORDS = re.compile(
+    r"\bfeat|\bft\.|\bwith\b|prod|inst|remaster|\bver\.|version|mix|edit|\blive\b", re.I
 )
 _DASH_SUFFIX = re.compile(r"\s+-\s+.*(remaster|version|mix|edit|live).*$", re.I)
 _NON_WORD = re.compile(r"[^\w]+", re.UNICODE)
@@ -27,9 +26,37 @@ ACCEPT_FILTERED = 0.80  # 아티스트 필터 검색: 제목 유사도 기준
 ACCEPT_LOOSE = 0.78  # 필터 없는 검색: 제목·아티스트 가중 점수 기준
 
 
+# Spotify 검색어(q) 최대 길이는 250자. 넘으면 400 "Query exceeds maximum length".
+MAX_QUERY = 250
+
+
+def _strip_decorations(t: str) -> str:
+    """버전/참여 표기 괄호를 지운다. 괄호 안에 괄호가 또 있어도(예: (Feat. 미란이(Mirani), ...)) 통째로."""
+    out: list[str] = []
+    i = 0
+    while i < len(t):
+        if t[i] in "([":
+            depth, j = 0, i
+            while j < len(t):
+                if t[j] in "([":
+                    depth += 1
+                elif t[j] in ")]":
+                    depth -= 1
+                    if depth == 0:
+                        break
+                j += 1
+            group = t[i : j + 1]  # 닫는 괄호가 없으면 끝까지
+            if _DECORATION_WORDS.search(group):
+                i = j + 1
+                continue
+        out.append(t[i])
+        i += 1
+    return re.sub(r"\s{2,}", " ", "".join(out))
+
+
 def clean_title(title: str) -> str:
     t = unicodedata.normalize("NFKC", title)
-    t = _DECORATION.sub("", t)
+    t = _strip_decorations(t)
     t = _DASH_SUFFIX.sub("", t)
     return t.strip()
 
@@ -70,8 +97,8 @@ def _album_bonus(track: Track, cand: dict) -> float:
     return 0.05 if track.album and album and similarity(track.album, album) >= 0.85 else 0.0
 
 
-def _query_escape(s: str) -> str:
-    return s.replace('"', " ").strip()
+def _query_escape(s: str, limit: int = 100) -> str:
+    return s.replace('"', " ").strip()[:limit].strip()
 
 
 @dataclass
@@ -89,21 +116,21 @@ Search = Callable[[str], list[dict]]
 
 
 def match_track(track: Track, search: Search) -> Match:
-    title = clean_title(track.title) or track.title
-    main_artist = track.artists[0] if track.artists else ""
+    title = _query_escape(clean_title(track.title) or track.title, 150)
+    main_artist = _query_escape(track.artists[0], 60) if track.artists else ""
 
     best: Optional[tuple[float, dict, str]] = None
 
     if main_artist:
-        q = f'track:"{_query_escape(title)}" artist:"{_query_escape(main_artist)}"'
-        for cand in search(q):
+        q = f'track:"{title}" artist:"{main_artist}"'
+        for cand in search(q[:MAX_QUERY]):
             s = _title_score(track, cand) + _album_bonus(track, cand)
             if s >= ACCEPT_FILTERED and (best is None or s > best[0]):
                 best = (s, cand, "filtered")
 
     if best is None:
         q = f"{title} {main_artist}".strip()
-        for cand in search(q):
+        for cand in search(q[:MAX_QUERY]):
             t = _title_score(track, cand)
             a = _artist_score(track, cand)
             s = 0.65 * t + 0.35 * a + _album_bonus(track, cand)

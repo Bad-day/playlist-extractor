@@ -10,7 +10,8 @@
 | 4 | 설치 | PowerShell에서 `Activate.ps1` 실행 오류, `pyproject.toml`을 못 찾음 | 사용 방법 안내로 해결 |
 | 5 | 설정 | Spotify 앱 만들 때 웹사이트 / 리디렉션 URI에 뭘 넣어야 하는지 | 사용 방법 안내로 해결 |
 | 6 | 벅스 | '최근 들은 곡'처럼 여러 페이지로 나뉜 목록도 추출하고 싶음 (기능 요청) | 추가함, 실제 확인 필요 |
-| 7 | Spotify | `match` 실행 시 검색이 403 "Insufficient client scope" | 수정함, 실제 확인 필요 |
+| 7 | Spotify | `match` 실행 시 검색이 403 "Insufficient client scope" | 해결 (실제 검색 동작 확인) |
+| 8 | Spotify | 피처링이 아주 긴 곡에서 400 "Query exceeds maximum length of 250 characters"로 `match`가 중단됨 | 수정함, 실제 확인 필요 |
 
 ---
 
@@ -133,5 +134,20 @@ python -m playwright install chromium
 - 검색 국가를 `KR`로 명시합니다. 다른 국가로 검색하려면 환경변수 `SPOTIFY_MARKET`으로 바꿀 수 있습니다(예: `$env:SPOTIFY_MARKET="JP"`).
 - 저장된 로그인 정보(`.spotify_token.json`)에 새 권한이 없으면 자동으로 다시 로그인합니다. 업데이트 후 첫 실행에서 Spotify 동의 화면이 한 번 더 뜨는 것은 정상입니다.
 
-**남은 확인**
-- 업데이트 후 `match`가 끝까지 진행되는지 확인해야 합니다.
+**확인**: 업데이트 후 곡 검색과 매칭(`✔`/`✘`)이 정상으로 진행되는 것을 확인했습니다.
+
+## 8. 피처링이 긴 곡에서 400 "Query exceeds maximum length" 로 `match` 중단
+
+**증상**
+- 매칭을 진행하다가 아래 곡에서 오류가 나며 전체가 멈췄습니다.
+  - 곡: `Achoo Remix (Feat. 미란이(Mirani), pH-1, 먼치맨, … 휘민 (Lil Moshpit), Khakii (카키))`
+  - 오류: `400 {"error": {"status": 400, "message": "Query exceeds maximum length of 250 characters"}}`
+
+**원인**
+- 검색어를 만들 때 제목에서 `(Feat. …)`를 지우는데, 괄호 안에 괄호가 또 있으면(`미란이(Mirani)`) 첫 번째 닫는 괄호에서 멈춰서 나머지가 남았습니다. 그 결과 검색어가 Spotify 제한(250자)을 넘었습니다.
+- 검색 오류가 곡 하나에서만 나도 `match` 전체가 중단됐습니다.
+
+**해결**
+- 괄호 짝을 세어서 `(Feat. …)` 괄호를 안쪽 괄호까지 통째로 지웁니다. 위 곡은 `Achoo Remix`로 검색합니다.
+- 검색어의 제목은 150자, 아티스트는 60자로 자르고, 전체 길이도 250자를 넘지 않게 했습니다.
+- 곡 하나에서 검색 오류가 나도 그 곡만 `✘`로 남기고 다음 곡으로 계속 진행합니다.

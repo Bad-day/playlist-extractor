@@ -72,7 +72,8 @@ def _client(args: argparse.Namespace):
 
 
 def cmd_match(args: argparse.Namespace) -> None:
-    from .matcher import match_track
+    from .matcher import Match, match_track
+    from .spotify import SpotifyError
 
     playlists = [p for path in args.inputs for p in load_playlists(Path(path))]
     if args.only:
@@ -90,7 +91,12 @@ def cmd_match(args: argparse.Namespace) -> None:
         for p in playlists:
             print(f"\n[{p.source}] {p.name} ({len(p.tracks)}곡)")
             for t in p.tracks:
-                m = match_track(t, client.search_tracks)
+                try:
+                    m = match_track(t, client.search_tracks)
+                except SpotifyError as e:
+                    # 한 곡 검색이 실패해도 전체를 멈추지 않고 '못 찾음'으로 남긴다
+                    print(f"  (검색 오류로 건너뜀: {str(e)[-120:]})")
+                    m = Match(track=t)
                 total += 1
                 matched += bool(m.uri)
                 mark = "✔" if m.uri else "✘"

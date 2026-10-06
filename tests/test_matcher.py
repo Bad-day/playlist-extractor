@@ -85,3 +85,26 @@ def test_read_match_csv_saved_by_excel_in_cp949(tmp_path):
          "국힙&외힙,vibe,곡,가수,,spotify:track:aaaaaaaaaaaaaaaaaaaaaa,,,,,\r\n").encode("cp949")
     )
     assert dict(read_match_csv(p)) == {"국힙&외힙": ["spotify:track:aaaaaaaaaaaaaaaaaaaaaa"]}
+
+
+ACHOO = (
+    "Achoo Remix (Feat. 미란이(Mirani), pH-1, 먼치맨, Skinny Brown, Louie, 릴러말즈 (Leellamarz), "
+    "Ourealgoat (아우릴고트), Dbo (디보), 식케이 (Sik-K), 오왼 (Owen), Kid Milli, 스윙스, Nudeboi Seo, "
+    "TRADE L, 쿠기 (Coogie), Blase (블라세), sokodomo, Khundi Panda, 휘민 (Lil Moshpit), Khakii (카키))"
+)
+
+
+def test_clean_title_nested_parentheses():
+    assert clean_title(ACHOO) == "Achoo Remix"
+    assert clean_title("긴 겨울 (With 오존 (O3ohn))") == "긴 겨울"
+    assert clean_title("Hero (Feat. JUSTHIS, Golden) (Prod. GroovyRoom)") == "Hero"
+    assert clean_title("밤새 (취향저격 그녀 X 카더가든)") == "밤새 (취향저격 그녀 X 카더가든)"
+
+
+def test_queries_stay_within_spotify_limit():
+    queries = []
+    long_title = "가" * 400 + " (Feat. " + "나" * 300 + ")"
+    match_track(Track(long_title, ["다" * 200]), lambda q: queries.append(q) or [])
+    match_track(Track(ACHOO, ["그루비룸(GroovyRoom)", "저스디스(JUSTHIS)"]), lambda q: queries.append(q) or [])
+    assert queries and all(len(q) <= 250 for q in queries)
+    assert queries[-2] == 'track:"Achoo Remix" artist:"그루비룸(GroovyRoom)"'
