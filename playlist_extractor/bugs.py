@@ -16,12 +16,13 @@ from playwright.sync_api import Page
 from .browser import CaptureLog, interactive_capture
 from .models import Playlist, Track
 
-START_URL = "https://music.bugs.co.kr/user/library"
+# 보관함 주소는 확인되지 않아(존재하지 않는 페이지가 열림) 벅스 홈에서 시작한다
+START_URL = "https://music.bugs.co.kr/"
 
 GUIDE = """
 === 벅스 추출 ===
 1. 열린 브라우저에서 벅스 로그인 (최초 1회, 이후 로그인 유지)
-2. 내 앨범 목록에서 옮길 앨범을 클릭해 곡 목록 페이지를 연다
+2. 상단 '내 음악' → '내 앨범'에서 옮길 앨범을 클릭해 곡 목록 페이지를 연다
 3. 터미널로 돌아와 Enter → 곡 목록 수집
    (곡이 여러 페이지로 나뉘어 있으면 페이지를 넘길 때마다 Enter → 같은 앨범으로 합쳐짐)
 4. 다른 앨범도 2~3 반복, 다 끝나면 q + Enter
