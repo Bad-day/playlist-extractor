@@ -24,7 +24,7 @@ from .models import Track
 
 # (feat. X), [Prod. Y], (Remastered) 등 버전/참여 표기로 보는 괄호 안 단어
 _DECORATION_WORDS = re.compile(
-    r"\bfeat|\bft\.|\bwith\b|prod|inst|remaster|\bver\.|version|mix|edit|\blive\b", re.I
+    r"\bfeat|\bft\.|\bwith\b|prod|inst|remaster|\bver\.|version|mix|edit|\blive\b|권리없는\s*곡", re.I
 )
 _DASH_SUFFIX = re.compile(r"\s+-\s+.*(remaster|version|mix|edit|live).*$", re.I)
 _NON_WORD = re.compile(r"[^\w]+", re.UNICODE)
