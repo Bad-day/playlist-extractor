@@ -71,8 +71,15 @@ def _client(args: argparse.Namespace):
     return client
 
 
+def _track_key(title: str, artist: str) -> tuple[str, str]:
+    from .matcher import artist_variants, clean_title, normalize
+
+    primary_artist = artist_variants(artist.split(",")[0])[0] if artist else ""
+    return (normalize(clean_title(title) or title), normalize(primary_artist))
+
+
 def cmd_match(args: argparse.Namespace) -> None:
-    from .matcher import Match, match_track
+    from .matcher import GUESS, Match, match_track
     from .spotify import SpotifyError
 
     playlists = [p for path in args.inputs for p in load_playlists(Path(path))]
@@ -81,37 +88,102 @@ def cmd_match(args: argparse.Namespace) -> None:
     if not playlists:
         sys.exit("매칭할 플레이리스트가 없습니다.")
 
-    client = _client(args)
     out = Path(args.output or OUTPUT / "match.csv")
     out.parent.mkdir(parents=True, exist_ok=True)
-    matched = guessed = total = 0
-    with out.open("w", newline="", encoding="utf-8-sig") as f:
+
+    # 기존 CSV 파일들에서 이미 매칭된 곡 캐시 및 이어하기(resume) 행 로드
+    track_cache: dict[tuple[str, str], dict[str, str]] = {}
+    for csv_candidate in (OUTPUT / "match.csv", out):
+        if csv_candidate.exists():
+            try:
+                with io.StringIO(_read_csv_text(csv_candidate), newline="") as cf:
+                    for r in csv.DictReader(cf):
+                        if r.get("spotify_uri"):
+                            track_cache[_track_key(r.get("title", ""), r.get("artist", ""))] = r
+            except Exception:
+                pass
+
+    existing_rows: list[dict[str, str]] = []
+    if out.exists() and not getattr(args, "overwrite", False):
+        try:
+            with io.StringIO(_read_csv_text(out), newline="") as cf:
+                existing_rows = list(csv.DictReader(cf))
+        except Exception:
+            existing_rows = []
+
+    skip_count = len(existing_rows)
+    matched = sum(1 for r in existing_rows if r.get("spotify_uri") and r.get("method") != GUESS)
+    guessed = sum(1 for r in existing_rows if r.get("method") == GUESS)
+    total = skip_count
+
+    if skip_count > 0:
+        print(f"기존 {out} 에서 이미 완료된 {skip_count}곡을 건너뛰고 {skip_count + 1}번째 곡부터 이어서 매칭합니다.", flush=True)
+
+    client = _client(args)
+    mode = "a" if skip_count > 0 else "w"
+    encoding = "utf-8" if skip_count > 0 else "utf-8-sig"
+    seen_idx = 0
+    with out.open(mode, newline="", encoding=encoding) as f:
         writer = csv.DictWriter(f, fieldnames=CSV_FIELDS)
-        writer.writeheader()
+        if skip_count == 0:
+            writer.writeheader()
+            f.flush()
         for p in playlists:
-            print(f"\n[{p.source}] {p.name} ({len(p.tracks)}곡)")
+            pl_total = len(p.tracks)
+            if seen_idx + pl_total <= skip_count:
+                seen_idx += pl_total
+                continue
+            print(f"\n[{p.source}] {p.name} ({pl_total}곡)", flush=True)
             for t in p.tracks:
-                try:
-                    m = match_track(t, client.search_tracks)
-                except SpotifyError as e:
-                    # 한 곡 검색이 실패해도 전체를 멈추지 않고 '못 찾음'으로 남긴다
-                    print(f"  (검색 오류로 건너뜀: {str(e)[-120:]})")
-                    m = Match(track=t)
+                if seen_idx < skip_count:
+                    seen_idx += 1
+                    continue
+                seen_idx += 1
+                key = _track_key(t.title, t.artist)
+                cached = track_cache.get(key)
+                if cached and cached.get("spotify_uri"):
+                    m = Match(
+                        track=t,
+                        uri=cached["spotify_uri"],
+                        name=cached.get("spotify_title", ""),
+                        artist=cached.get("spotify_artist", ""),
+                        album=cached.get("spotify_album", ""),
+                        score=float(cached["score"]) if cached.get("score") else 1.0,
+                        method=cached.get("method", "cached"),
+                    )
+                else:
+                    try:
+                        m = match_track(t, client.search_tracks)
+                    except SpotifyError as e:
+                        if "429 일일 요청 제한" in str(e):
+                            print(f"\n⚠️ {e}", flush=True)
+                            print(f"현재까지 총 {total}곡이 {out}에 안전하게 저장되었습니다.", flush=True)
+                            return
+                        print(f"  (검색 오류로 건너뜀: {str(e)[-120:]})", flush=True)
+                        m = Match(track=t)
                 total += 1
                 guessed += m.is_guess
                 matched += bool(m.uri) and not m.is_guess
                 mark = "△" if m.is_guess else ("✔" if m.uri else "✘")
-                print(f"  {mark} {t.title} / {t.artist}" + (f"  →  {m.name} / {m.artist} ({m.score})" if m.uri else ""))
-                writer.writerow({
+                print(
+                    f"  [{total}] {mark} {t.title} / {t.artist}"
+                    + (f"  →  {m.name} / {m.artist} ({m.score})" if m.uri else ""),
+                    flush=True,
+                )
+                row_dict = {
                     "playlist": p.name, "source": p.source,
                     "title": t.title, "artist": t.artist, "album": t.album,
                     "spotify_uri": m.uri, "spotify_title": m.name, "spotify_artist": m.artist,
                     "spotify_album": m.album, "score": m.score or "", "method": m.method,
-                })
-    print(f"\n✔ 찾음 {matched}곡 / △ 추정 {guessed}곡 / ✘ 못 찾음 {total - matched - guessed}곡  (전체 {total}곡)")
-    print(f"결과: {out}")
-    print("△ 추정은 가장 비슷한 곡입니다. CSV에서 method 가 guess 인 줄을 확인하세요 (push 때 기본 포함, --exclude-guesses 로 제외).")
-    print("✘ 못 찾은 곡은 Spotify 곡 링크를 spotify_uri 칸에 붙여 넣으면 push 때 함께 추가됩니다.")
+                }
+                writer.writerow(row_dict)
+                f.flush()
+                if m.uri:
+                    track_cache[key] = row_dict
+    print(f"\n✔ 찾음 {matched}곡 / △ 추정 {guessed}곡 / ✘ 못 찾음 {total - matched - guessed}곡  (전체 {total}곡)", flush=True)
+    print(f"결과: {out}", flush=True)
+    print("△ 추정은 가장 비슷한 곡입니다. CSV에서 method 가 guess 인 줄을 확인하세요 (push 때 기본 포함, --exclude-guesses 로 제외).", flush=True)
+    print("✘ 못 찾은 곡은 Spotify 곡 링크를 spotify_uri 칸에 붙여 넣으면 push 때 함께 추가됩니다.", flush=True)
 
 
 _TRACK_LINK = re.compile(r"open\.spotify\.com/(?:intl-[a-z]+/)?track/([A-Za-z0-9]{22})")
@@ -155,15 +227,15 @@ def cmd_push(args: argparse.Namespace) -> None:
     client = _client(args)
     for name, uris in groups.items():
         if not uris:
-            print(f"- {name}: 추가할 곡 없음, 건너뜀")
+            print(f"- {name}: 추가할 곡 없음, 건너뜀", flush=True)
             continue
         title = f"{args.prefix}{name}"
         if args.dry_run:
-            print(f"- [dry-run] '{title}' 에 {len(uris)}곡 추가 예정")
+            print(f"- [dry-run] '{title}' 에 {len(uris)}곡 추가 예정", flush=True)
             continue
         playlist = client.create_playlist(title, description="playlist-extractor로 이전", public=args.public)
         client.add_items(playlist["id"], uris)
-        print(f"✔ '{title}' {len(uris)}곡 → {playlist.get('external_urls', {}).get('spotify', '')}")
+        print(f"✔ '{title}' {len(uris)}곡 → {playlist.get('external_urls', {}).get('spotify', '')}", flush=True)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -182,6 +254,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("inputs", nargs="+", help="vibe.json / bugs.json")
     p.add_argument("-o", "--output", help="결과 CSV (기본 output/match.csv)")
     p.add_argument("--only", nargs="+", help="이 이름의 플레이리스트만")
+    p.add_argument("--overwrite", action="store_true", help="기존 CSV에 이어서 하지 않고 처음부터 덮어쓰기")
     p.add_argument("--client-id")
     p.set_defaults(func=cmd_match)
 

@@ -3,6 +3,8 @@
 Client Secret 없이 Client ID만으로 동작한다. 2026년 2월 Web API 변경 사항을 반영해
 곡 추가는 `/playlists/{id}/items`, 플레이리스트 생성은 `/me/playlists`를 먼저 쓰고
 구 엔드포인트는 404일 때만 대체로 시도한다.
+개발 모드의 `/v1/search` 24시간 요청 제한(429)에 걸릴 경우, Spotify 웹 플레이어(Pathfinder GraphQL)
+검색으로 자동 전환하여 중단 없이 매칭을 이어간다.
 """
 
 from __future__ import annotations
@@ -25,6 +27,7 @@ import requests
 AUTH_URL = "https://accounts.spotify.com/authorize"
 TOKEN_URL = "https://accounts.spotify.com/api/token"
 API = "https://api.spotify.com/v1"
+PATHFINDER_URL = "https://api-partner.spotify.com/pathfinder/v2/query"
 DEFAULT_REDIRECT = "http://127.0.0.1:8888/callback"
 # user-read-private: 검색 시 사용자 국가(market)를 쓰려면 필요. 없으면 /search가 403 "Insufficient client scope".
 SCOPES = "playlist-modify-private playlist-modify-public playlist-read-private user-read-private"
@@ -44,7 +47,7 @@ def _pkce_pair() -> tuple[str, str]:
     return verifier, challenge
 
 
-def _wait_for_code(redirect_uri: str, state: str, timeout: int = 300) -> str:
+def _wait_for_code(redirect_uri: str, state: str, timeout: int = 1800) -> str:
     parsed = urllib.parse.urlparse(redirect_uri)
     result: dict[str, str] = {}
 
@@ -86,12 +89,17 @@ class SpotifyClient:
         self._token: Optional[dict[str, Any]] = None
         self._search_cache: dict[str, list[dict]] = {}
         self._me: Optional[dict] = None
+        self._last_search_ts: float = 0.0
+        self._use_pathfinder: bool = False
+        self._pf_headers: dict[str, str] = {}
+        self._pf_hash: str = ""
 
     # --- 인증 -------------------------------------------------------------
     def _save_token(self, data: dict) -> None:
         if "refresh_token" not in data and self._token:
             data["refresh_token"] = self._token.get("refresh_token")
         data["expires_at"] = time.time() + int(data.get("expires_in", 3600)) - 60
+        data["client_id"] = self.client_id
         self._token = data
         self.token_path.write_text(json.dumps(data), encoding="utf-8")
         os.chmod(self.token_path, 0o600)
@@ -103,8 +111,7 @@ class SpotifyClient:
             if not missing:
                 self._token = token
                 return
-            # 권한(scope)이 추가된 새 버전이면 예전 토큰으로는 403이 나므로 다시 로그인한다
-            print(f"Spotify 권한이 추가되어 다시 로그인합니다: {' '.join(sorted(missing))}")
+            print(f"Spotify 권한이 추가되어 다시 로그인합니다: {' '.join(sorted(missing))}", flush=True)
             self.token_path.unlink()
         verifier, challenge = _pkce_pair()
         state = secrets.token_urlsafe(16)
@@ -119,7 +126,7 @@ class SpotifyClient:
                 "code_challenge": challenge,
             }
         )
-        print(f"브라우저에서 Spotify 로그인/권한 허용을 진행하세요.\n(자동으로 안 열리면 직접 열기: {url})")
+        print(f"브라우저에서 Spotify 로그인/권한 허용을 진행하세요.\n(자동으로 안 열리면 직접 열기: {url})", flush=True)
         webbrowser.open(url)
         code = _wait_for_code(self.redirect_uri, state)
         resp = requests.post(
@@ -139,12 +146,13 @@ class SpotifyClient:
 
     def _refresh(self) -> None:
         assert self._token
+        cid = self._token.get("client_id") or self.client_id
         resp = requests.post(
             TOKEN_URL,
             data={
                 "grant_type": "refresh_token",
                 "refresh_token": self._token["refresh_token"],
-                "client_id": self.client_id,
+                "client_id": cid,
             },
             timeout=30,
         )
@@ -164,7 +172,9 @@ class SpotifyClient:
             resp = self.session.request(method, API + path, headers=headers, timeout=30, **kwargs)
             if resp.status_code == 429:
                 wait = int(resp.headers.get("Retry-After", "2")) + 1
-                print(f"  (요청 제한, {wait}초 대기)")
+                if wait > 60:
+                    raise SpotifyError(f"429_RATE_LIMIT:{wait}")
+                print(f"  (요청 제한, {wait}초 대기)", flush=True)
                 time.sleep(wait)
                 continue
             if resp.status_code == 401 and attempt == 0:
@@ -186,12 +196,103 @@ class SpotifyClient:
             self._me = self._json(self.request("GET", "/me"))
         return self._me
 
+    # --- 웹 플레이어(Pathfinder) 검색 폴백 ---------------------------------
+    def _init_pathfinder(self) -> None:
+        from playwright.sync_api import sync_playwright
+
+        print("  (Spotify Web API 검색 한도 도달 → 웹 플레이어 검색 엔진으로 자동 전환 중...)", flush=True)
+        captured_headers: dict[str, str] = {}
+        captured_hash: str = ""
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            context = browser.new_context(locale="ko-KR")
+            page = context.new_page()
+
+            def on_request(req):
+                nonlocal captured_headers, captured_hash
+                if "pathfinder" in req.url and req.post_data and "searchDesktop" in req.post_data:
+                    captured_headers = dict(req.headers)
+                    body = json.loads(req.post_data)
+                    captured_hash = body["extensions"]["persistedQuery"]["sha256Hash"]
+
+            page.on("request", on_request)
+            page.goto("https://open.spotify.com/search/spotify", wait_until="networkidle", timeout=30000)
+            browser.close()
+        if not captured_headers or not captured_hash:
+            raise SpotifyError("웹 플레이어 검색 초기화 실패")
+        self._pf_headers = captured_headers
+        self._pf_hash = captured_hash
+        self._use_pathfinder = True
+
+    def _search_pathfinder(self, query: str, limit: int = 10) -> list[dict]:
+        if not self._pf_headers or not self._pf_hash:
+            self._init_pathfinder()
+        payload = {
+            "variables": {
+                "searchTerm": query,
+                "offset": 0,
+                "limit": limit,
+                "numberOfTopResults": 5,
+                "includeAudiobooks": False,
+                "includeArtistHasConcertsField": False,
+                "includePreReleases": True,
+                "includeAlbumPreReleases": False,
+                "includeAuthors": False,
+                "includeEpisodeContentRatingsV2": False,
+                "isPrefix": None,
+                "sectionFilters": ["GENERIC"],
+            },
+            "operationName": "searchDesktop",
+            "extensions": {"persistedQuery": {"version": 1, "sha256Hash": self._pf_hash}},
+        }
+        for attempt in range(3):
+            resp = self.session.post(PATHFINDER_URL, headers=self._pf_headers, json=payload, timeout=20)
+            if resp.status_code in (401, 403) and attempt == 0:
+                self._init_pathfinder()
+                continue
+            if resp.status_code == 429:
+                time.sleep(int(resp.headers.get("Retry-After", "2")) + 1)
+                continue
+            break
+        if resp.status_code != 200:
+            return []
+        raw_items = resp.json().get("data", {}).get("searchV2", {}).get("tracksV2", {}).get("items", []) or []
+        converted: list[dict] = []
+        for entry in raw_items:
+            d = (entry.get("item") or {}).get("data") or {}
+            if d.get("__typename") != "Track" or not d.get("uri"):
+                continue
+            artists = [
+                {"name": a["profile"]["name"]}
+                for a in (d.get("artists") or {}).get("items", [])
+                if (a.get("profile") or {}).get("name")
+            ]
+            album_name = (d.get("albumOfTrack") or {}).get("name", "")
+            converted.append(
+                {
+                    "uri": d["uri"],
+                    "name": d.get("name", ""),
+                    "artists": artists,
+                    "album": {"name": album_name},
+                }
+            )
+        return converted
+
     def search_tracks(self, query: str, limit: int = 10) -> list[dict]:
         if query not in self._search_cache:
-            resp = self.request(
-                "GET", "/search", params={"q": query, "type": "track", "limit": limit, "market": self.market}
-            )
-            self._search_cache[query] = self._json(resp).get("tracks", {}).get("items", []) or []
+            if not self._use_pathfinder:
+                try:
+                    resp = self.request(
+                        "GET", "/search", params={"q": query, "type": "track", "limit": limit, "market": self.market}
+                    )
+                    self._search_cache[query] = self._json(resp).get("tracks", {}).get("items", []) or []
+                    return self._search_cache[query]
+                except SpotifyError as e:
+                    if "429_RATE_LIMIT" in str(e):
+                        self._init_pathfinder()
+                    else:
+                        raise
+            self._search_cache[query] = self._search_pathfinder(query, limit=limit)
         return self._search_cache[query]
 
     def create_playlist(self, name: str, description: str = "", public: bool = False) -> dict:
